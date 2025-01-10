@@ -3,9 +3,9 @@ import email
 from email.header import decode_header
 
 # Configuration
-IMAP_SERVER = "mail.nexright.com"
-EMAIL = "demo@nexright.com"
-PASSWORD = "demo@nexright"
+IMAP_SERVER = "example.host.com"
+EMAIL = "demo@example.com"
+PASSWORD = "password of demo@example.com"
 
 class Email:
     def __init__(self, subject, sender, body, cc=None, bcc=None, attachments=0):
