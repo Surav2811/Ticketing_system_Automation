@@ -3,10 +3,10 @@ from email.mime.text import MIMEText
 
 def send_email(to_email, subject, body):
     # Outlook SMTP server details
-    SMTP_SERVER = "mail.nexright.com"
+    SMTP_SERVER = "mail.example.com"
     SMTP_PORT = 587
-    EMAIL = "demo@nexright.com"
-    PASSWORD = "demo@nexright"
+    EMAIL = "demo@example.com"
+    PASSWORD = "password of demo@example.com"
 
     # Create the email
     msg = MIMEText(body)
