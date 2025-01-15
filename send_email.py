@@ -1,24 +1,34 @@
 import smtplib
+from dotenv import load_dotenv
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import os
 
-def send_email(to_email, subject, body):
-    # Outlook SMTP server details
-    SMTP_SERVER = "mail.example.com"
-    SMTP_PORT = 587
-    EMAIL = "demo@example.com"
-    PASSWORD = "password of demo@example.com"
+load_dotenv()
+def send_email(to, subject, body):
+    """Send an email notification."""
+    try:
+        # Email configuration
+        # Email configuration from .env
+        sender_email = os.getenv("SENDER_EMAIL")
+        sender_password = os.getenv("SENDER_PASSWORD")
+        smtp_server = os.getenv("SMTP_SERVER")
+        smtp_port = int(os.getenv("SMTP_PORT"))
 
-    # Create the email
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = EMAIL
-    msg["To"] = to_email
+        # Create the email
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = to
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
 
-    # Send the email
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        server.starttls()
-        server.login(EMAIL, PASSWORD)
-        server.sendmail(EMAIL, [to_email], msg.as_string())
+        # Send the email
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
 
-# Example usage
-send_email("saurav.mishra@advintek.com.sg", "Jira Ticket Updated", "The ticket has been updated.")
+        print(f"Email sent to {to} with subject: {subject}")
+
+    except Exception as e:
+        print(f"Error sending email: {e}")

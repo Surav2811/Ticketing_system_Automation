@@ -1,20 +1,24 @@
 import imaplib
 import email
 from email.header import decode_header
+import os
+from dotenv import load_dotenv
 
-# Configuration
-IMAP_SERVER = "example.host.com"
-EMAIL = "demo@example.com"
-PASSWORD = "password of demo@example.com"
+load_dotenv()
+
+# Configuration from .env
+IMAP_SERVER = os.getenv("IMAP_SERVER")
+EMAIL = os.getenv("EMAIL")
+PASSWORD = os.getenv("PASSWORD")
 
 class Email:
-    def __init__(self, subject, sender, body, cc=None, bcc=None, attachments=0):
+    def __init__(self, subject, sender, body, cc=None, bcc=None, attachments=None):
         self.subject = subject
         self.sender = sender
         self.body = body
         self.cc = cc
         self.bcc = bcc
-        self.attachments = attachments
+        self.attachments = attachments if attachments else []
 
     def __str__(self):
         """Returns a detailed string representation of the email."""
@@ -25,7 +29,7 @@ class Email:
         if self.bcc:
             email_str += f"BCC: {self.bcc}\n"
         email_str += f"Body: {self.body[:100]}...\n"  # Truncate body for display
-        email_str += f"Attachments: {self.attachments}\n"
+        email_str += f"Attachments: {len(self.attachments)}\n"
         return email_str
 
 class EmailProcessor:
@@ -67,7 +71,7 @@ class EmailProcessor:
                             body = self.get_email_body(msg)
                             cc = msg.get("Cc", "")
                             bcc = msg.get("Bcc", "")
-                            attachments = self.count_attachments(msg)
+                            attachments = self.extract_attachments(msg)
 
                             # Create an Email object
                             email_obj = Email(subject, from_, body, cc, bcc, attachments)
@@ -108,15 +112,37 @@ class EmailProcessor:
             body = msg.get_payload(decode=True).decode("utf-8")
         return body
 
-    def count_attachments(self, msg):
-        """Count the number of attachments in the email."""
-        attachments = 0
+    def extract_attachments(self, msg):
+        """Extract attachments from the email and save them to a temporary directory."""
+        attachments = []
         if msg.is_multipart():
             for part in msg.walk():
+                # Skip multipart containers (e.g., email body)
                 if part.get_content_maintype() == "multipart":
                     continue
-                if part.get("Content-Disposition") is not None:
-                    attachments += 1
+
+                # Check if the part has a filename (i.e., it's an attachment)
+                filename = part.get_filename()
+                if filename:
+                    # Decode the filename if it's encoded
+                    filename, encoding = decode_header(filename)[0]
+                    if isinstance(filename, bytes):
+                        filename = filename.decode(encoding or "utf-8")
+
+                    # Create a temporary directory to store attachments
+                    temp_dir = "temp_attachments"
+                    if not os.path.exists(temp_dir):
+                        os.makedirs(temp_dir)
+
+                    # Save the attachment to the temporary directory
+                    filepath = os.path.join(temp_dir, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(part.get_payload(decode=True))
+
+                    # Add the filepath to the attachments list
+                    attachments.append(filepath)
+                    print(f"Saved attachment: {filename} to {filepath}")
+
         return attachments
 
     def print_stats(self):
