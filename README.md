@@ -8,3 +8,5 @@ Create new Ticket based on the email
 Update the ticket
 Send email based on the updated email
 Store the processing records in a csv file
+
+Added ignore Spam and old messages
