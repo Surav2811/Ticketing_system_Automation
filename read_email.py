@@ -3,170 +3,122 @@ import email
 from email.header import decode_header
 import os
 from dotenv import load_dotenv
+import logging
+from dataclasses import dataclass
+from typing import List, Optional
+import tempfile
 
-load_dotenv()
-
-# Configuration from .env
-IMAP_SERVER = os.getenv("IMAP_SERVER")
-EMAIL = os.getenv("EMAIL")
-PASSWORD = os.getenv("PASSWORD")
-
-class Email:
-    def __init__(self, subject, sender, body, cc=None, bcc=None, attachments=None):
-        self.subject = subject
-        self.sender = sender
-        self.body = body
-        self.cc = cc
-        self.bcc = bcc
-        self.attachments = attachments if attachments else []
-
-    def __str__(self):
-        """Returns a detailed string representation of the email."""
-        email_str = f"Subject: {self.subject}\n"
-        email_str += f"From: {self.sender}\n"
-        if self.cc:
-            email_str += f"CC: {self.cc}\n"
-        if self.bcc:
-            email_str += f"BCC: {self.bcc}\n"
-        email_str += f"Body: {self.body[:100]}...\n"  # Truncate body for display
-        email_str += f"Attachments: {len(self.attachments)}\n"
-        return email_str
+@dataclass
+class EmailData:
+    subject: str
+    body: str
+    sender: str
+    recipients: List[str]
+    cc: List[str]
+    attachments: List[str]
+    message_id: str
 
 class EmailProcessor:
     def __init__(self):
-        self.seen_count = 0
-        self.unseen_count = 0
-        self.processed_count = 0
-        self.emails = []
+        load_dotenv()
+        self.imap_server = os.getenv("IMAP_SERVER")
+        self.email_address = os.getenv("EMAIL")
+        self.password = os.getenv("PASSWORD")
+        self.temp_dir = tempfile.mkdtemp()
+        self.initialize_connection()
 
-    def fetch_unread_emails(self):
+    def initialize_connection(self):
+        """Initialize connection to IMAP server."""
         try:
-            # Connect to the IMAP server
-            mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-            mail.login(EMAIL, PASSWORD)
-            mail.select("Inbox")  # Select the inbox folder
-
-            # Search for unread emails
-            status, messages = mail.search(None, "UNSEEN")
-            if status != "OK":
-                print("No unread emails found.")
-                return
-
-            email_ids = messages[0].split()
-            self.unseen_count = len(email_ids)
-
-            for email_id in email_ids:
-                try:
-                    # Fetch the email by ID
-                    status, msg_data = mail.fetch(email_id, "(RFC822)")
-                    for response_part in msg_data:
-                        if isinstance(response_part, tuple):
-                            msg = email.message_from_bytes(response_part[1])
-
-                            # Extract email details
-                            subject, encoding = decode_header(msg["Subject"])[0]
-                            if isinstance(subject, bytes):
-                                subject = subject.decode(encoding or "utf-8")
-                            from_ = msg.get("From")
-                            body = self.get_email_body(msg)
-                            cc = msg.get("Cc", "")
-                            bcc = msg.get("Bcc", "")
-                            attachments = self.extract_attachments(msg)
-
-                            # Create an Email object
-                            email_obj = Email(subject, from_, body, cc, bcc, attachments)
-                            self.emails.append(email_obj)
-
-                            # Mark the email as read
-                            mail.store(email_id, "+FLAGS", "\\Seen")
-                            self.processed_count += 1
-
-                except Exception as e:
-                    print(f"Error processing email ID {email_id}: {e}")
-
-            # Count seen emails
-            status, messages = mail.search(None, "SEEN")
-            if status == "OK":
-                self.seen_count = len(messages[0].split())
-
-        except imaplib.IMAP4.error as e:
-            print(f"IMAP error: {e}")
+            self.imap = imaplib.IMAP4_SSL(self.imap_server)
+            self.imap.login(self.email_address, self.password)
+            logging.info("Successfully connected to IMAP server")
         except Exception as e:
-            print(f"Unexpected error: {e}")
-        finally:
-            try:
-                mail.logout()
-            except:
-                pass
+            logging.error(f"Failed to connect to IMAP server: {e}")
+            raise
+
+    def decode_email_subject(self, subject):
+        """Decode email subject."""
+        decoded_parts = []
+        for part, encoding in decode_header(subject):
+            if isinstance(part, bytes):
+                try:
+                    decoded_parts.append(part.decode(encoding or 'utf-8'))
+                except:
+                    decoded_parts.append(part.decode('utf-8', 'ignore'))
+            else:
+                decoded_parts.append(part)
+        return ' '.join(decoded_parts)
 
     def get_email_body(self, msg):
-        """Extract the email body from the message."""
-        body = ""
+        """Extract email body from message."""
         if msg.is_multipart():
             for part in msg.walk():
-                content_type = part.get_content_type()
-                if content_type == "text/plain":
-                    body = part.get_payload(decode=True).decode("utf-8")
-                    break
+                if part.get_content_type() == "text/plain":
+                    try:
+                        return part.get_payload(decode=True).decode()
+                    except:
+                        return part.get_payload(decode=True).decode('utf-8', 'ignore')
         else:
-            body = msg.get_payload(decode=True).decode("utf-8")
-        return body
+            try:
+                return msg.get_payload(decode=True).decode()
+            except:
+                return msg.get_payload(decode=True).decode('utf-8', 'ignore')
+        return ""
 
-    def extract_attachments(self, msg):
-        """Extract attachments from the email and save them to a temporary directory."""
-        attachments = []
+    def save_attachments(self, msg) -> List[str]:
+        """Save email attachments and return their file paths."""
+        attachment_paths = []
+        
         if msg.is_multipart():
             for part in msg.walk():
-                # Skip multipart containers (e.g., email body)
-                if part.get_content_maintype() == "multipart":
+                if part.get_content_maintype() == 'multipart':
+                    continue
+                if part.get('Content-Disposition') is None:
                     continue
 
-                # Check if the part has a filename (i.e., it's an attachment)
                 filename = part.get_filename()
                 if filename:
-                    # Decode the filename if it's encoded
-                    filename, encoding = decode_header(filename)[0]
-                    if isinstance(filename, bytes):
-                        filename = filename.decode(encoding or "utf-8")
-
-                    # Create a temporary directory to store attachments
-                    temp_dir = "temp_attachments"
-                    if not os.path.exists(temp_dir):
-                        os.makedirs(temp_dir)
-
-                    # Save the attachment to the temporary directory
-                    filepath = os.path.join(temp_dir, filename)
-                    with open(filepath, "wb") as f:
+                    filepath = os.path.join(self.temp_dir, filename)
+                    with open(filepath, 'wb') as f:
                         f.write(part.get_payload(decode=True))
+                    attachment_paths.append(filepath)
+        
+        return attachment_paths
 
-                    # Add the filepath to the attachments list
-                    attachments.append(filepath)
-                    print(f"Saved attachment: {filename} to {filepath}")
+    def parse_email(self, msg) -> EmailData:
+        """Parse email message into EmailData object."""
+        try:
+            subject = self.decode_email_subject(msg["subject"] or "")
+            body = self.get_email_body(msg)
+            sender = msg["from"]
+            recipients = msg["to"].split(',') if msg["to"] else []
+            cc = msg["cc"].split(',') if msg["cc"] else []
+            attachments = self.save_attachments(msg)
+            message_id = msg["message-id"]
 
-        return attachments
+            return EmailData(
+                subject=subject,
+                body=body,
+                sender=sender,
+                recipients=recipients,
+                cc=cc,
+                attachments=attachments,
+                message_id=message_id
+            )
+        except Exception as e:
+            logging.error(f"Error parsing email: {e}")
+            raise
 
-    def print_stats(self):
-        """Print statistics about seen, unseen, and processed emails."""
-        print(f"Unseen Emails: {self.unseen_count}")
-        print(f"Seen Emails: {self.seen_count}")
-        print(f"Processed Emails: {self.processed_count}")
+    def cleanup(self):
+        """Clean up temporary files and close connections."""
+        try:
+            import shutil
+            shutil.rmtree(self.temp_dir)
+            self.imap.logout()
+        except Exception as e:
+            logging.error(f"Error during cleanup: {e}")
 
-    def print_processed_emails(self):
-        """Print all processed emails in a structured format."""
-        if not self.emails:
-            print("No emails processed.")
-            return
-
-        print("\nProcessed Emails:")
-        print("=" * 50)
-        for idx, email_obj in enumerate(self.emails, start=1):
-            print(f"Email #{idx}:")
-            print(email_obj)
-            print("-" * 50)
-
-# Example usage
-if __name__ == "__main__":
-    processor = EmailProcessor()
-    processor.fetch_unread_emails()
-    processor.print_stats()
-    processor.print_processed_emails()
+    def __del__(self):
+        """Destructor to ensure cleanup."""
+        self.cleanup()
